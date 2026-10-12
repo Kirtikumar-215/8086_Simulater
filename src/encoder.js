@@ -22,6 +22,10 @@ export function encode(source) {
     if (i.op === 'MUL' && A === 'AL') return [0xf6, 0xe0];
     if (i.op === 'INT' && number(a, parsed.symbols) === 3) return [0xcc];
     if (i.op === 'HLT') return [0xf4];
+    if (i.op === 'JMP' || i.op === 'JZ' || i.op === 'JNZ') {
+      const displacement = parsed.labels[A] - (i.address + 2);
+      return [{ JMP: 0xeb, JZ: 0x74, JNZ: 0x75 }[i.op], displacement & 0xff];
+    }
     throw Error(`Cannot encode line ${i.line}: ${i.text}`);
   });
 }

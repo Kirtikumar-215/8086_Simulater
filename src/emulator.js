@@ -11,12 +11,12 @@ const OPS = new Set(['MOV', 'ADD', 'SUB', 'ADC', 'SBB', 'XCHG', 'PUSH', 'POP', '
 const clean = s => s.replace(/;.*$/, '').trim();
 const WORD_CODES = { AX: 0, CX: 1, DX: 2, BX: 3, SP: 4, BP: 5, SI: 6, DI: 7 };
 const BYTE_CODES = { AL: 0, CL: 1, DL: 2, BL: 3, AH: 4, CH: 5, DH: 6, BH: 7 };
-const cloneCpuState = cpu => ({
+const cloneCpuState = (cpu, copyMemory = false) => ({
   ...cpu,
   regs: { ...cpu.regs },
   flags: { ...cpu.flags },
   segments: { ...cpu.segments },
-  memory: new Uint8Array(cpu.memory),
+  memory: copyMemory ? new Uint8Array(cpu.memory) : cpu.memory,
   output: [...cpu.output],
   program: [...cpu.program],
 });
@@ -92,7 +92,49 @@ export function parse(source) {
     else if (op === 'DW') address += args.length * 2;
     else address += instructionSize(statement);
   }
-  return { instructions: statements.filter(s => OPS.has(s.op)), labels, symbols, errors, statements };
+  const instructions = statements.filter(s => OPS.has(s.op));
+  for (const statement of instructions) {
+    const error = validateInstruction(statement, symbols, labels);
+    if (error) errors.push(`Line ${statement.line}: ${error}`);
+  }
+  return { instructions, labels, symbols, errors, statements };
+}
+
+export function validateInstruction(statement, symbols = {}, labels = {}) {
+  const [a, b] = statement.args;
+  const A = a?.toUpperCase(), B = b?.toUpperCase();
+  const isWord = value => WORD_CODES[value] !== undefined;
+  const isByte = value => BYTE_CODES[value] !== undefined;
+  const isRegister = value => isWord(value) || isByte(value);
+  const sameWidth = isWord(A) && isWord(B) || isByte(A) && isByte(B);
+  const noArgs = statement.args.length === 0;
+  try {
+    if (statement.op === 'MOV') {
+      if (!isRegister(A) || !b || isRegister(B)) return 'MOV requires a register and an immediate value';
+      number(b, symbols);
+      return null;
+    }
+    if (['ADD', 'SUB', 'ADC', 'SBB'].includes(statement.op)) {
+      if (!sameWidth) return `${statement.op} requires same-width register operands`;
+      return null;
+    }
+    if (statement.op === 'XCHG') {
+      if (!sameWidth && !(A === 'AX' && isWord(B)) && !(B === 'AX' && isWord(A))) return 'XCHG requires same-width register operands';
+      return null;
+    }
+    if (['PUSH', 'POP'].includes(statement.op)) return isWord(A) && statement.args.length === 1 ? null : `${statement.op} requires one word register`;
+    if (statement.op === 'MUL') return A === 'AL' && statement.args.length === 1 ? null : 'MUL supports only AL';
+    if (statement.op === 'INT') return statement.args.length === 1 && number(a, symbols) === 3 ? null : 'INT supports only 03H';
+    if (statement.op === 'HLT') return noArgs ? null : 'HLT takes no operands';
+    if (['JMP', 'JZ', 'JNZ'].includes(statement.op)) {
+      if (statement.args.length !== 1 || labels[A] === undefined) return `${statement.op} requires a defined label`;
+      const displacement = labels[A] - (statement.address + 2);
+      return displacement < -128 || displacement > 127 ? `${statement.op} target is out of short-jump range` : null;
+    }
+    return null;
+  } catch (error) {
+    return error.message;
+  }
 }
 
 function getReg(cpu, name) {
@@ -180,12 +222,13 @@ export function step(cpu, parsed = { labels: {}, symbols: {} }) {
       const carryIn = (ins.op === 'ADC' || ins.op === 'SBB') && next.flags.CF ? 1 : 0;
       const result = subtract ? (av - bv - carryIn) : (av + bv + carryIn);
       setReg(next, a, result);
-      applyArithFlags(next, av, bv + (subtract ? carryIn : 0), result, subtract, carryIn, width);
+      applyArithFlags(next, av, bv, result, subtract, carryIn, width);
     } else if (ins.op === 'XCHG') {
       const av = getReg(next, a);
       setReg(next, a, getReg(next, b));
       setReg(next, b, av);
     } else if (ins.op === 'PUSH') {
+      next.memory = new Uint8Array(next.memory);
       next.regs.SP = u16(next.regs.SP - 2);
       write16(next.memory, phys(next.segments.SS, next.regs.SP), getReg(next, a));
     } else if (ins.op === 'POP') {
@@ -250,6 +293,7 @@ function loadData(cpu, parsed) {
 
 export function createMachine(source) {
   const parsed = parse(source);
+  if (parsed.errors.length) throw Error(parsed.errors.join('\n'));
   const cpu = createCpu(parsed.instructions);
   loadData(cpu, parsed);
   return { parsed, cpu };
@@ -257,11 +301,11 @@ export function createMachine(source) {
 
 export function run(source, max = 1000) {
   const { parsed, cpu: initial } = createMachine(source);
-  let cpu = cloneCpuState(initial);
-  const history = [cloneCpuState(cpu)];
+  let cpu = cloneCpuState(initial, true);
+  const history = [cpu];
   for (let i = 0; i < max && !cpu.halted && !cpu.interrupted; i++) {
     cpu = step(cpu, parsed);
-    history.push(cloneCpuState(cpu));
+    history.push(cpu);
   }
   return { cpu, parsed, history };
 }

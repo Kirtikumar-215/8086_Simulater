@@ -11,6 +11,10 @@ The application is buildable, locally runnable, and functionally verified for it
 - Clean `npm ci` completed successfully.
 - Added a Phase 6 baseline report.
 - Hardened the UI Step/Run boundary so malformed `DB`/`DW` values become visible diagnostics instead of uncaught UI failures.
+- Corrected SBB flag calculation so incoming CF is applied exactly once.
+- Added shared instruction validation before CPU creation/encoding, including rejection of unsupported register forms.
+- Added signed short JMP/JZ/JNZ encodings with range validation.
+- Changed execution history to copy memory on initial state and only on runtime memory writes; register/flag/output snapshots remain immutable without a 1 MiB copy on every step.
 - Added a regression test for invalid data values.
 - Standardized the encoder's ESM import so direct Node probes work.
 - Added Phase 6 AMP acceptance and browser-test reports.
@@ -19,17 +23,17 @@ The application is buildable, locally runnable, and functionally verified for it
 
 | Check | Status | Actual evidence |
 |---|---|---|
-| Dependency installation | PASS | `npm ci` completed successfully |
+| Dependency installation | PASS | `npm ci` completed successfully on 2026-10-12; npm reported the existing 6 development advisories |
 | Lockfile validation | PASS | `npm ci` resolved from `package-lock.json` |
-| Unit tests | PASS | `npm test`: 13 tests passed |
+| Unit tests | PASS | `npm test`: 19 tests passed after the final fixes |
 | CPU acceptance tests | PASS | AMP A-F and boundary probes passed |
-| Instruction encoding | PASS | Independent expected bytes matched actual bytes |
-| Browser tests | PASS | Local production browser checks; details in Phase 6 browser report |
+| Instruction encoding | PASS | Independent expected bytes matched actual bytes, including signed short jumps |
+| Browser tests | PASS (prior evidence) | Local production browser checks are recorded in the Phase 6 browser report; not rerun during this defect-fix pass |
 | Linting | NOT APPLICABLE | No lint script/configuration exists |
-| Production build | PASS | `npm run build` completed |
+| Production build | PASS | `npm run build` completed successfully after the final fixes |
 | Production preview | PASS | `npm run preview -- --host 127.0.0.1 --port 4173` served the bundle |
 | Runtime dependency audit | PASS | `npm audit --omit=dev --audit-level=high`: 0 vulnerabilities |
-| Full dependency audit | FAIL / OPEN | 6 development-tooling advisories; fixes require breaking upgrades |
+| Full dependency audit | FAIL / OPEN | `npm audit --audit-level=high` reports 6 development-tooling advisories (3 moderate, 1 high, 2 critical); fixes require breaking upgrades |
 | Security review | PASS WITH LIMITATIONS | No app/input/secrets issue confirmed; dev advisories remain |
 | Static deployment | PASS WITH LIMITATIONS | Root and `/Vea/` builds verified; no workflow or live deployment |
 | Deployment | NOT RUN | No authorization or workflow; no live URL claimed |
@@ -43,6 +47,7 @@ The application is buildable, locally runnable, and functionally verified for it
 - Full npm audit reports six development-tooling advisories in Vitest/Vite/esbuild/tinypool; no breaking upgrade was applied.
 - General memory operands, complete MASM syntax, full interrupt vectors, and cycle accuracy are out of scope.
 - Source-line highlighting for the current instruction is not implemented.
+- Only the declared register-register arithmetic forms are accepted; immediate arithmetic remains intentionally unsupported because it has no encoder path in this subset.
 
 ## Owner next steps
 
